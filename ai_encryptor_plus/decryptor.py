@@ -1,4 +1,3 @@
-
 import os, json, hashlib
 from pathlib import Path
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -14,7 +13,9 @@ def _aes_gcm_decrypt(key: bytes, nonce12: bytes, data: bytes) -> bytes:
     a = AESGCM(key)
     return a.decrypt(nonce12, data, None)
 
-def decrypt_file(enc_path: str, out_path: str, key_id: str=None):
+# --- MODIFICATION ---
+# Added 'master_secret' argument.
+def decrypt_file(enc_path: str, out_path: str, key_id: str=None, master_secret: str = None):
     ep = Path(enc_path)
     meta = ep.with_suffix(ep.suffix + ".meta.json")
     header = None
@@ -47,7 +48,13 @@ def decrypt_file(enc_path: str, out_path: str, key_id: str=None):
                 key_id = None
     if not key_id:
         raise KeyError("key_id required or not found in .meta.json")
-    key, stored_mode = load_key(key_id)
+    
+    # --- MODIFICATION ---
+    if not master_secret:
+        raise ValueError("Master secret is required for decryption")
+    key, stored_mode = load_key(key_id, master_secret)
+    # --- END MODIFICATION ---
+
     if stored_mode and stored_mode.lower() != mode.lower():
         # allow modes difference but warn
         pass
