@@ -1,7 +1,7 @@
-import heapq, time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# ai_encryptor_plus/scheduler_plus.py
+import heapq
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 from .cost_model import CostModel
 
 class Task:
@@ -20,36 +20,38 @@ class SchedulerPlus:
 
     def plan(self, files: List[Path]) -> List[Task]:
         # Files ko priority ke saath schedule karta hai
-        # Return: Task objects ka list (priority order mein)
-
-        # 1) tiny batch → FIFO
-        if len(files) <= 2:
-            return [Task(0, p, p.stat().st_size, p.suffix.lower()) for p in files]
+        
+        if not files: return []
 
         total_size = sum(p.stat().st_size for p in files)
 
-        # 2) total workload too small → FIFO
-        if total_size < 4 * 1024 * 1024:    # 4 MB
-            return [Task(0, p, p.stat().st_size, p.suffix.lower()) for p in files]
+        # --- OS SCHEDULING OPTIMIZATION ---
+        # Threshold: 10 MB.
+        # If total work is small, the overhead of predicting cost (CostModel) 
+        # is higher than the actual work. 
+        # Solution: Use simple "Shortest Job First" (SJF) via standard sort.
+        # This guarantees we are faster than FIFO for small batches.
+        if total_size < 10 * 1024 * 1024: 
+            # Create tasks with priority = size (Smaller size = Higher priority)
+            raw_tasks = [Task(p.stat().st_size, p, p.stat().st_size, p.suffix.lower()) for p in files]
+            raw_tasks.sort(key=lambda x: x.size)
+            return raw_tasks
 
-        # 3) files all small → FIFO
-        if all(p.stat().st_size < 256 * 1024 for p in files):  # < 256 KB
-            return [Task(0, p, p.stat().st_size, p.suffix.lower()) for p in files]
-
-        # AI model se priority predict karta hai
+        # --- HEAVY WORKLOAD AI LOGIC ---
+        # Only use the predictive model for non-trivial workloads
         pq = []
         for p in files:
             size = p.stat().st_size
             suffix = p.suffix.lower()
             prio = self.cm.predict_seconds(chunk_size=size, suffix=suffix, sample=None)
             heapq.heappush(pq, Task(prio, p, size, suffix))
+        
         plan = []
         while pq:
             plan.append(heapq.heappop(pq))
         return plan
 
     def observe(self, p: Path, elapsed: float):
-        # File process karne mein actual time nikalta hai
-        # CostModel ko update karta hai
+        # Feedback loop for the AI model
         size = p.stat().st_size
         self.cm.observe(chunk_size=size, suffix=p.suffix.lower(), actual_s=elapsed, sample=None)
